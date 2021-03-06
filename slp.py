@@ -1,104 +1,271 @@
 #! /usr/bin/env python3
 
-import sys
-from random import randint, sample, random
-from math import e
+from random import sample, uniform
+from math import exp
 
 import numpy as np
 from mnist import MNIST
 import matplotlib.pyplot as plt
 
-LR = 0.01
-B = random()
-T = 0
-EPS = 1.0e-15
 
-def get_data(k=500):
-    mndata = MNIST("./data")
-    images, labels = mndata.load_training()
-    indices = sample([n for n in range(len(images))], k=k)
-    return (np.array([normalize(images[i]) for i in indices]),
-            np.array([labels[i] for i in indices]))
+class SingleLayerPerceptron:
+    def __init__(self, train_X=None, train_D=None, test_X=None, test_D=None,
+                 W=None, ntrain=500, ntest=100, iterations=20, dims=None,
+                 learning_rate=0.01, bias=None, threshold=None, epsilon=1.0e-7,
+                 activation_function=None, dataset="digits", complete=False):
+        if dataset in {"mnist", "balanced", "digits", "bymerge", "letters", "byclass"}:
+            self.dataset = dataset
+            self.dims = dims
+        else:
+            self.dataset = "digits"
+            self.dims = (784, 10)
+            
+        if all((train_X, train_D)):
+            self.dims = (len(train_X[0]), len(set(train_D)))
+            self.train_X = np.array([self._normalize(x) for x in train_X])
+            self.train_D = np.array([self._onehot(d) for d in train_D])
+        else:
+            self.train_X, tD = self._get_data(k=ntrain, train=True, complete=complete)
+            if dataset == "letters":
+                tD = np.subtract(tD, 1)
+            self.train_D = np.array([self._onehot(d) for d in tD])
+            
+        if all((test_X, test_D)):
+            self.test_X = np.array([self._normalize(x) for x in test_X])
+            self.test_D = test_D
+        else:
+            self.test_X, self.test_D = self._get_data(k=ntest, complete=complete)
+            if dataset == "letters":
+                self.test_D = np.subtract(self.test_D, 1)
+        
+        self.threshold = threshold
+        if self.threshold:
+            self.train_X = np.array([self._binary(x) for x in self.train_X])
+            self.test_X = np.array([self._binary(x) for x in self.test_X])
 
-def normalize(X):
-    mn = min(X)
-    mx = max(X)
-    return np.array([(x-mn)/(mx-mn) for x in X])
+        if activation_function:
+            self.f = activation_function
+        else:
+            self.f = lambda z: 1/(1+exp(-z))
+            
+        self.W = self._init_weights(W)
+        self.learning_rate = learning_rate
+        if bias:
+            self.bias = bias
+        else:
+            self.bias = uniform(-1, 1)
+        self.epsilon = epsilon
+        self.iterations = iterations
+        self.mean_squared_errors = []
+        self.accuracy = []
+
+
+    def _get_data(self, k, train=False, complete=False):
+        if self.dataset == "digits":
+            mndata = MNIST("./data")
+        else:
+            mndata = MNIST("./emnist_data/")
+            mndata.gz = True
+            mndata.select_emnist(self.dataset)
+        if train:
+            images, labels = mndata.load_training()
+        else:
+            images, labels = mndata.load_testing()
+        self.dims = (len(images[0]), len(set(labels)))
+        if complete:
+            return (np.array([self._normalize(i) for i in images]),
+                    np.array(labels))
+        indices = sample([n for n in range(k)], k=k)
+        return (np.array([self._normalize(images[i]) for i in indices]),
+                np.array([labels[i] for i in indices]))
+
+
+    def _normalize(self, X):
+        mn = min(X)
+        mx = max(X)
+        return np.array([(x - mn) / (mx - mn) for x in X])
+
+
+    def _binary(self, x):
+        b = np.zeros(x.shape)
+        for i in range(len(b)):
+            if x[i] > self.threshold:
+                b[i] = 1
+        return b
+
+
+    def _onehot(self, n):
+        vec = np.zeros(self.dims[1])
+        vec[n] = 1
+        return vec
+
+
+    def _init_weights(self, W=None):
+        if W is not None:
+            return W
+        return np.random.random(self.dims)
+
+
+    def _apply_weights(self, w, x):
+        return np.dot(np.transpose(w), x) + self.bias
+
+
+    def _activate(self, z):
+        return self.f(z)
+
+
+    def _error(self, w, x, d):
+        z = self._apply_weights(w, x)
+        yhat = self._activate(z)
+        return d - yhat
+
+
+    def _update (self, w, x, error):
+        return w + self.learning_rate * error * x
+
+
+    def _epoch(self, X, D):
+        errors = []
+        for n in range(self.dims[1]):
+            for x, d in zip(X, D):
+                error = self._error(self.W[:, n], x, d[n])
+                self.W[:, n] = self._update(self.W[:, n], x, error)
+                errors.append(error)
+        return (sum(errors)/len(errors))**2
+
+
+    def train(self):
+        self.mean_squared_errors = []
+        for i in range(self.iterations):
+            mse = self._epoch(self.train_X, self.train_D)
+            self.mean_squared_errors.append(mse)
+            print(f"MSE iteration {i}: {mse}")
+            if mse < self.epsilon:
+                print(f"Reached epsilon {self.epsilon} at {i} iterations")
+                break
+
+
+    def test(self):
+        correct = 0
+        letters = {n: {'correct': 0, 'incorrect': 0} for n in range(self.dims[1])}
+        for x, d in zip(self.test_X, self.test_D):
+            y = np.dot(np.transpose(self.W), x)
+            if np.argmax(y) == d:
+                correct += 1
+        return correct / len(self.test_X)
+
+    def test_iterations(self):
+        self.accuracy = []
+        for i in range(self.iterations):
+            _ = self._epoch(self.train_X, self.train_D)
+            accuracy = self.test()
+            print(f"Accuracy at iteration {i}: {accuracy}")
+            self.accuracy.append(accuracy)
+
+    def reset(self):
+        self.W = self._init_weights()
+        self.accuracy = []
+        self.mean_squared_errors = []
+
+    def plot_mse(self):
+        if self.mean_squared_errors == []:
+            self.train()
+        plt.plot(self.mean_squared_errors)
+        plt.show()
+
+    def plot_accuracy(self, W=None):
+        if self.accuracy == []:
+            self.test_iterations()
+        plt.plot(self.accuracy)
+        plt.show()
+
+
 
 def sigmoid(z):
-    return 1/(1 + e**(-z))
+    return 1/(1 + exp(-z))
+
 
 def relu(z):
     return max(0, z)
 
+
 def tanh(z):
-    return (e**(z) - e**(-z))/(e**(z) + e**(-z))
+    return (exp(z) - exp(-z))/(exp(z) + exp(-z))
 
-def initialize_weights(shape):
-    return np.random.random(shape)
 
-def activation(W, x, f=sigmoid):
-    z = np.dot(np.transpose(W), x) + B
-    return f(z)
+def heaviside(z):
+    if z > 0:
+        return 1
+    return 0
 
-def onehot(n):
-    ohv = np.zeros(10)
-    ohv[n] = 1
-    return ohv
 
-def update(W, x, d, f):
-    yhat = activation(W, x, f)
-    return (W + LR*(d - yhat)*x, d-yhat)
+def linear(z):
+    return z
 
-def binary_image(x):
-    b = np.zeros((784,))
-    for i in range(len(b)):
-        if x[i] > T:
-            b[i] = 1
-    return b
 
-def train(X, D, W=None, k=500, epochs=10, f=sigmoid):
-    #X, D = get_data(k=k)
-    #D = [onehot(d) for d in D]
-    #X = [binary_image(x) for x in X]
-    if W is None:
-        W = initialize_weights((len(X[0]), 10))
-    err = 0
-    errors = []
-    mserrors = []
-    for i in range(epochs):
-        for n in range(10):
-            for x, d in zip(X, D):
-                W[:, n], err = update(W[:, n], x, d[n], f)
-                errors.append(err)
-        mse = (sum(errors)/k)**2
-        print(f"MSE Iteration {i}: {mse}")
-        mserrors.append(mse)
-        if mse < EPS:
-            break
-        errors = []
-    return W, mserrors
+if __name__ == '__main__':
+    slp = SingleLayerPerceptron()
+    print("Task 0")
+    slp.plot_mse()
+    slp.reset()
+    slp.plot_accuracy()
 
-def test(X, D, W, k=100):
-    #X, D = get_data(k=k)
-    correct = 0
+    print("Task 1: Learning rate == 1")
+    slp = SingleLayerPerceptron(learning_rate=1.0, threshold=0.5)
+    slp.plot_mse()
+    slp.reset()
+    slp.plot_accuracy()
 
-    for x, d in zip(X, D):
-        y = np.dot(np.transpose(W), x)
-        if np.argmax(y) == d:
-            correct += 1
+    print("Task 1: Learning rate == 0.1")
+    slp.learning_rate = 0.1
+    slp.reset()
+    slp.plot_mse()
+    slp.reset()
+    slp.plot_accuracy()
 
-    return correct / k
+    print("Task 1: Learning rate == 0.01")
+    slp.learning_rate = 0.01
+    slp.reset()
+    slp.plot_mse()
+    slp.reset()
+    slp.plot_accuracy()
 
-def n_tests(k=500, iterations=20, f=sigmoid):
-    X, D = get_data(k=k)
-    tX, tD = get_data(k=100)
-    Doh = [onehot(d) for d in D]
-    #X = [binary_image(x) for x in X]
-    accuracy = []
-    W = None
-    for i in range(iterations):
-        W, _ = train(X, Doh, W=W, k=k, epochs=1, f=f)
-        accuracy.append(test(tX, tD, W, k=1000))
-    plt.plot(accuracy)
-    plt.show()
+    print("Task 2: Learning rate == 1")
+    slp = SingleLayerPerceptron(ntrain=10000, ntest=1000, learning_rate=1.0, threshold=0.5)
+    slp.plot_mse()
+    slp.reset()
+    slp.plot_accuracy()
+
+    print("Task 2: Learning rate == 0.1")
+    slp.learning_rate = 0.1
+    slp.reset()
+    slp.plot_mse()
+    slp.reset()
+    slp.plot_accuracy()
+
+    print("Task 2: Learning rate == 0.01")
+    slp.learning_rate = 0.01
+    slp.reset()
+    slp.plot_mse()
+    slp.reset()
+    slp.plot_accuracy()
+
+     print("Task 3: Learning rate == 1")
+    slp = SingleLayerPerceptron(learning_rate=1.0)
+    slp.plot_mse()
+    slp.reset()
+    slp.plot_accuracy()
+
+    print("Task 3: Learning rate == 0.1")
+    slp.learning_rate = 0.1
+    slp.reset()
+    slp.plot_mse()
+    slp.reset()
+    slp.plot_accuracy()
+
+    print("Task 3: Learning rate == 0.01")
+    slp.learning_rate = 0.01
+    slp.reset()
+    slp.plot_mse()
+    slp.reset()
+    slp.plot_accuracy()
