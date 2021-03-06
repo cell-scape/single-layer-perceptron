@@ -12,7 +12,7 @@ class SingleLayerPerceptron:
     def __init__(self, train_X=None, train_D=None, test_X=None, test_D=None,
                  W=None, ntrain=500, ntest=100, iterations=20, dims=None,
                  learning_rate=0.01, bias=None, threshold=None, epsilon=1.0e-10,
-                 activation_function="sigmoid", dataset="digits", complete=False):
+                 activation_function=None, dataset="digits", complete=False):
         if dataset in {"mnist", "balanced", "digits", "bymerge", "letters", "byclass"}:
             self.dataset = dataset
             self.dims = dims
@@ -43,18 +43,10 @@ class SingleLayerPerceptron:
             self.train_X = np.array([self._binary(x) for x in self.train_X])
             self.test_X = np.array([self._binary(x) for x in self.test_X])
 
-        self.activation_function = activation_function.lower().strip()
-        if self.activation_function == "relu":
-            self.f = self._relu
-        elif self.activation_function == "tanh":
-            self.f = self._tanh
-        elif self.activation_function == "linear":
-            self.f = self._linear
-        elif self.activation_function == "heaviside":
-            self.f = self._heaviside
+        if activation_function:
+            self.f = activation_function
         else:
-            self.f = self._sigmoid
-            self.activation_function = "sigmoid"
+            self.f = lambda z: 1/(1+exp(-z))
             
         self.W = self._init_weights(W)
         self.learning_rate = learning_rate
@@ -106,28 +98,6 @@ class SingleLayerPerceptron:
         vec = np.zeros(self.dims[1])
         vec[n] = 1
         return vec
-
-
-    def _sigmoid(self, z):
-        return 1/(1 + exp(-z))
-
-
-    def _relu(self, z):
-        return max(0, z)
-
-
-    def _tanh(self, z):
-        return (exp(z) - exp(-z))/(exp(z) + exp(-z))
-
-
-    def _heaviside(self, z):
-        if z > 0:
-            return 1
-        return 0
-
-
-    def _linear(self, z):
-        return z
 
 
     def _init_weights(self, W=None):
@@ -206,3 +176,26 @@ class SingleLayerPerceptron:
             self.test_iterations()
         plt.plot(self.accuracy)
         plt.show()
+
+
+
+def sigmoid(z):
+    return 1/(1 + exp(-z))
+
+
+def relu(z):
+    return max(0, z)
+
+
+def tanh(z):
+    return (exp(z) - exp(-z))/(exp(z) + exp(-z))
+
+
+def heaviside(z):
+    if z > 0:
+        return 1
+    return 0
+
+
+def linear(z):
+    return z
