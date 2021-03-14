@@ -4,3 +4,6 @@ python3 -m venv .
 source bin/activate
 pip install --upgrade pip
 pip install python-mnist numpy jupyterlab matplotlib
+./bin/mnist_get_data.sh
+./bin/emnist_get_data.sh
+
